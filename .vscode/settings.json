@@ -1,0 +1,13 @@
+{
+    "chat.tools.terminal.autoApprove": {
+
+        "/^cd e:\\\\Falikh\\\\charon ; node -e \"\nimport Database from 'better-sqlite3';\n\nconst db = new Database\\('\\./charon\\.sqlite'\\);\n\nconst fiveMinAgo = Date\\.now\\(\\) - \\(5 \\* 60 \\* 1000\\);\n\nconsole\\.log\\('📡 SIGNAL PATTERNS \\(last 5 min\\):\\\\n'\\);\n\n// Group by signal kind\nconst byKind = db\\.prepare\\('SELECT kind, COUNT\\(\\*\\) as cnt FROM signal_events WHERE at_ms > \\? GROUP BY kind'\\)\n  \\.all\\(fiveMinAgo\\);\n\nconsole\\.log\\('By signal kind:'\\);\nbyKind\\.forEach\\(k => \\{\n  console\\.log\\('  ' \\+ k\\.kind \\+ ': ' \\+ k\\.cnt\\);\n\\}\\);\n\n// Check payload sources\nconsole\\.log\\('\\\\nSignal sources:'\\);\nconst signals = db\\.prepare\\('SELECT payload_json FROM signal_events WHERE at_ms > \\? LIMIT 5'\\)\n  \\.all\\(fiveMinAgo\\);\n\nsignals\\.forEach\\(s => \\{\n  try \\{\n    const p = JSON\\.parse\\(s\\.payload_json\\);\n    console\\.log\\('  Source count: ' \\+ \\(p\\.sourceCount \\|\\| 1\\)\\);\n    console\\.log\\('  Has fee: ' \\+ \\(p\\.hasFee \\? 'yes' : 'no'\\)\\);\n    console\\.log\\('  Route: ' \\+ \\(p\\.route \\|\\| 'unknown'\\)\\);\n    console\\.log\\(''\\);\n  \\} catch \\(e\\) \\{\n    console\\.log\\('  \\(parse error\\)'\\);\n  \\}\n\\}\\);\n\ndb\\.close\\(\\);\n\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^node check-gradeC\\.js$/": {
+            "autoapprove": true,
+            "matchCommandLine": true
+        }
+    }
+}

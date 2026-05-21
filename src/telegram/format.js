@@ -1,4 +1,5 @@
 import { escapeHtml, fmtPct, fmtSol, fmtUsd, short, gmgnLink, txLink, accountLink } from '../format.js';
+import { getGradeEmoji } from '../pipeline/advancedFilters.js';
 
 export function formatRecipients(shareholders) {
   if (!shareholders?.length) return '';
@@ -17,53 +18,35 @@ export function signalLabel(signals = {}) {
   ].filter(Boolean).join(' + ') || signals.route || 'unknown';
 }
 
-export function candidateSummary(candidate, decision = null) {
-  const chartWindow = candidate.chart?.windows?.find(row => row.label === 'ath_context_24h_5m' && row.available)
-    || candidate.chart?.windows?.find(row => row.label === 'recent_24h_5m' && row.available);
-  const route = candidate.signals?.label || signalLabel(candidate.signals);
-  const lines = [
-    `🛶 <b>Charon Candidate</b>`,
-    '',
-    `Signal: <b>${escapeHtml(route)}</b>`,
-    candidate.token.name || candidate.token.symbol ? `Name: <b>${escapeHtml(candidate.token.name || candidate.token.symbol)}${candidate.token.symbol && candidate.token.name ? ` (${escapeHtml(candidate.token.symbol)})` : ''}</b>` : null,
-    `Token: <a href="${gmgnLink(candidate.token.mint)}">${short(candidate.token.mint)}</a>`,
-    `<code>${escapeHtml(candidate.token.mint)}</code>`,
-    [
-      `Mcap: ${fmtUsd(candidate.metrics.marketCapUsd)}`,
-      `Liq: ${fmtUsd(candidate.metrics.liquidityUsd)}`,
-      `Fees: ${fmtSol(candidate.metrics.gmgnTotalFeesSol)} SOL`,
-      `Grad vol: ${fmtUsd(candidate.metrics.graduatedVolumeUsd)}`,
-    ].join(' · '),
-    [
-      `Holders: ${candidate.metrics.holderCount || '?'}`,
-      `Top20: ${fmtPct(candidate.holders.top20Percent)}`,
-      `Max holder: ${fmtPct(candidate.holders.maxHolderPercent)}`,
-      `Saved wallets: ${candidate.savedWalletExposure.holderCount}/${candidate.savedWalletExposure.checked}`,
-    ].join(' · '),
-    candidate.trending ? [
-      `Trending: #${candidate.trending.rank || '?'}/${escapeHtml(candidate.trending.interval || '')}`,
-      `Vol: ${fmtUsd(candidate.metrics.trendingVolumeUsd)}`,
-      `Swaps: ${candidate.metrics.trendingSwaps || 0}`,
-      `Hot: ${candidate.metrics.trendingHotLevel || 0}`,
-      `Smart: ${candidate.metrics.trendingSmartDegenCount || 0}`,
-    ].join(' · ') : null,
-    chartWindow ? [
-      `ATH ctx: ${fmtPct(chartWindow.belowHighPercent)} from 24h high`,
-      `Range low: ${fmtPct(chartWindow.aboveLowPercent)}`,
-      `Top risk: ${candidate.chart.topBlastRisk ? 'yes' : 'no'}`,
-    ].join(' · ') : null,
-    candidate.twitterNarrative?.metrics ? [
-      `Tweet: ${candidate.twitterNarrative.metrics.likes} likes`,
-      `${candidate.twitterNarrative.metrics.retweets} RT`,
-      `${candidate.twitterNarrative.metrics.replies} replies`,
-      `${candidate.twitterNarrative.metrics.quotes} quotes`,
-    ].join(' · ') : null,
-    candidate.feeClaim ? `Fee claim: <b>${fmtSol(candidate.feeClaim.distributedSol)} SOL</b>` : null,
-    candidate.twitterNarrative?.text ? `Narrative: ${escapeHtml(candidate.twitterNarrative.text.slice(0, 220))}` : null,
-    decision ? `LLM: <b>${escapeHtml(decision.verdict)}</b> ${fmtPct(decision.confidence)} — ${escapeHtml(decision.reason || '')}` : null,
-    candidate.filters.passed ? null : `Filtered: ${escapeHtml(candidate.filters.failures.join('; '))}`,
-  ];
-  return lines.filter(Boolean).join('\n');
+export function candidateSummary(candidate) {
+  const health = candidate.health;
+  const healthEmoji = health ? getGradeEmoji(health.grade) : '⚪';
+  const healthScore = health ? `${health.score}` : '?';
+  
+  let summary = `<b>Token: ${escapeHtml(candidate.symbol)}</b>\n`;
+  summary += `Health: ${healthEmoji} <b>${health?.grade || '?'}</b> (${healthScore}/100)\n`;
+  summary += `Price: $${candidate.priceUsd?.toFixed(8) || '?'}\n`;
+  summary += `Liquidity: $${Math.round(candidate.liquidity?.poolCapital || 0).toLocaleString()}\n`;
+  summary += `Volume 24h: $${Math.round(candidate.volume24h || 0).toLocaleString()}\n`;
+  summary += `Holders: ${candidate.holders || '?'}\n`;
+
+  // Risk alerts
+  if (health && health.risks.length > 0) {
+    summary += `\n<b>⚠️ Risk Alerts:</b>\n`;
+    health.risks.slice(0, 3).forEach(risk => {
+      summary += `• <i>${risk.message}</i>\n`;
+    });
+  }
+
+  // Warnings
+  if (health && health.warnings.length > 0) {
+    summary += `\n<b>Warnings:</b>\n`;
+    health.warnings.forEach(w => {
+      summary += `${w}\n`;
+    });
+  }
+
+  return summary;
 }
 
 export function compactCandidateLine(row, index = null) {

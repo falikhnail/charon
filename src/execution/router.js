@@ -74,7 +74,7 @@ export async function executeConfirmedIntent(chatId, intentId) {
         '',
         candidateSummary(freshRow.candidate, decision),
         '',
-        `Failures: ${escapeHtml((freshRow.candidate.filters?.failures || []).join('; ') || 'fresh execution guard failed')}`,
+        `Failures: ${escapeHtml((freshRow.candidate.filters?.failedFilters || []).join('; ') || 'fresh execution guard failed')}`,
       ].join('\n'), { parse_mode: 'HTML', disable_web_page_preview: true });
     }
     const strat = activeStrategy();

@@ -1,5 +1,5 @@
 import { now, json } from '../utils.js';
-import { numSetting, boolSetting, strategyById } from '../db/settings.js';
+import { numSetting, boolSetting, strategyById, activeStrategy } from '../db/settings.js';
 import { db } from '../db/connection.js';
 import { firstPositiveNumber, marketCapFromGmgn, tokenPriceFromGmgn } from '../utils.js';
 import { fetchGmgnTokenInfo } from '../enrichment/gmgn.js';
@@ -30,6 +30,7 @@ export async function freshEntryMarket(mint, candidate) {
 export async function refreshCandidateForExecution(row) {
   const candidate = row.candidate;
   const mint = candidate.token.mint;
+  const strat = activeStrategy();
   const gmgn = await fetchGmgnTokenInfo(mint, false);
   const asset = await fetchJupiterAsset(mint, { useCache: false });
   const holders = await fetchJupiterHolders(mint);
@@ -86,7 +87,7 @@ export async function refreshCandidateForExecution(row) {
       holdersRefreshed: Boolean(holders?.holders?.length),
     },
   };
-  refreshed.filters = filterCandidate(refreshed);
+  refreshed.filters = filterCandidate(refreshed, strat);
   const executionFailures = [];
   if (!Number.isFinite(Number(refreshed.metrics.marketCapUsd)) || Number(refreshed.metrics.marketCapUsd) <= 0) {
     executionFailures.push('execution mcap: missing');
@@ -98,7 +99,7 @@ export async function refreshCandidateForExecution(row) {
     refreshed.filters = {
       ...refreshed.filters,
       passed: false,
-      failures: [...(refreshed.filters?.failures || []), ...executionFailures],
+      failures: [...(refreshed.filters?.failedFilters || []), ...executionFailures],
     };
   }
   updateCandidateSnapshot(row.id, refreshed, refreshed.filters.passed ? 'candidate' : 'filtered');

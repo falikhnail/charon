@@ -34,7 +34,8 @@ export async function processCandidateFromSignals(signals) {
   const signature = signals.signature || null;
   const candidateId = upsertCandidate(candidate, signature);
   if (!candidate.filters.passed) {
-    console.log(`[candidate] filtered ${candidate.token.mint.slice(0, 8)}... ${candidate.filters.failures.join('; ')}`);
+    const failureReason = (candidate.filters.failedFilters || []).join('; ') || candidate.filters.reason || 'unknown';
+    console.log(`[candidate] filtered ${candidate.token.mint.slice(0, 8)}... ${failureReason}`);
     return;
   }
 
@@ -85,9 +86,10 @@ export async function processCandidateFromSignals(signals) {
     batchDecision.id = currentDecisionId;
   }
 
+
   if (batchId) await sendBatchReveal(batchId, rows, batchDecision, candidateId);
 
-  if (selectedRow && boolSetting('agent_enabled', true) && batchDecision.verdict === 'BUY' && batchDecision.confidence >= numSetting('llm_min_confidence', 75)) {
+  if (selectedRow && boolSetting('agent_enabled', true) && batchDecision.verdict === 'BUY' && batchDecision.confidence >= (strat.llm_min_confidence ?? 50)) {
     if (!canOpenMorePositions()) {
       const max = numSetting('max_open_positions', 3);
       console.log(`[agent] max open positions reached (${openPositionCount()}/${max}), skipping buy ${selectedRow.candidate.token.mint}`);
@@ -113,7 +115,7 @@ export async function processCandidateFromSignals(signals) {
       action: selectedRow ? 'entry_not_approved' : 'no_candidate_selected',
       guardrails: {
         agentEnabled: boolSetting('agent_enabled', true),
-        confidenceThreshold: numSetting('llm_min_confidence', 75),
+        confidenceThreshold: strat.llm_min_confidence ?? 50,
         openPositions: openPositionCount(),
         maxOpenPositions: numSetting('max_open_positions', 3),
       },
@@ -136,7 +138,7 @@ export async function handleApprovedBuy(selectedRow, decision, batchId, rows = [
       mode,
       action: 'entry_rejected_fresh_filters',
       guardrails: {
-        failures: freshSelectedRow.candidate.filters?.failures || [],
+        failures: freshSelectedRow.candidate.filters?.failedFilters || [],
         refreshedAtMs: freshSelectedRow.candidate.executionRefresh?.refreshedAtMs,
       },
     });
@@ -145,7 +147,7 @@ export async function handleApprovedBuy(selectedRow, decision, batchId, rows = [
       '',
       candidateSummary(freshSelectedRow.candidate, decision),
       '',
-      `Failures: ${escapeHtml((freshSelectedRow.candidate.filters?.failures || []).join('; ') || 'fresh execution guard failed')}`,
+      `Failures: ${escapeHtml((freshSelectedRow.candidate.filters?.failedFilters || []).join('; ') || 'fresh execution guard failed')}`,
     ].join('\n'));
     return;
   }
