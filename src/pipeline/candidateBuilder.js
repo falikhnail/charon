@@ -133,61 +133,65 @@ export function filterCandidate(candidate, settings = {}) {
   }
 
   // ==========================================
-  // LIQUIDITY (TESTING: 20k compromise - was 10k, tried 40k)
+  // LIQUIDITY
   // ==========================================
   if (
     candidate.metrics?.liquidityUsd <
-    (settings.minLiquidity ?? 20000)
+    (settings.minLiquidity ?? 5000)
   ) {
     failedFilters.push('LIQUIDITY');
   }
 
   // ==========================================
-  // MARKET CAP (TESTING: 50k compromise - new was 100k)
+  // MARKET CAP (fixed: now reads min_mcap_usd from strategy)
   // ==========================================
   const mcap = candidate.metrics?.marketCapUsd || candidate.metrics?.graduatedMarketCapUsd || 0;
-  if (mcap < (settings.minMarketCap ?? 50000)) {
+  const minMcap = settings.minMarketCap ?? settings.min_mcap_usd ?? 25000;
+  if (mcap < minMcap) {
     failedFilters.push('MCAP_TOO_LOW');
   }
 
   // ==========================================
-  // HOLDER CONCENTRATION (TESTING: 50% compromise - was 75%, tried 40%)
+  // HOLDER CONCENTRATION (fixed: reads both key variants)
   // ==========================================
+  const maxTopTen = settings.maxTopTenPercent ?? settings.max_top20_holder_percent ?? 75;
   if (
-    candidate.holderData?.topTenPercent >
-    (settings.maxTopTenPercent ?? 50)
+    candidate.holderData?.topTenPercent > maxTopTen
   ) {
     failedFilters.push('HOLDER_CONCENTRATION');
   }
 
   // ==========================================
-  // VOLUME (TESTING: 10k compromise - was 1k, tried 25k)
+  // VOLUME (fixed: reads both key variants)
   // ==========================================
   const volume24h =
     candidate.metrics?.graduatedVolumeUsd ||
     candidate.metrics?.trendingVolumeUsd ||
     0;
 
-  if (volume24h < (settings.minVolume24h ?? 10000)) {
+  const minVolume = settings.minVolume24h ?? settings.min_graduated_volume_usd ?? 5000;
+  if (volume24h < minVolume) {
     failedFilters.push('VOLUME');
   }
 
   // ==========================================
-  // AGE CHECK (TESTING: 1 hour compromise - was 30min, tried 3h)
+  // AGE CHECK
   // ==========================================
   const ageHours =
     (Date.now() - candidate.createdAtMs) / (1000 * 3600);
 
-  if (ageHours < (settings.minAgeHours ?? 1)) {
+  if (ageHours < (settings.minAgeHours ?? 0)) {
     failedFilters.push('TOO_NEW');
   }
 
   // ==========================================
-  // MINT RISK (NEW: check for common rug indicators)
+  // MINT RISK (only flag if fee claim has known rug indicators)
   // ==========================================
   if (candidate.token?.mint && candidate.signals?.label === 'fee_claim') {
-    // Fee claim tokens often have rug pattern
-    if (!candidate.feeClaim?.isInactive) {
+    // Only reject if fee claim has explicit rug indicators (high bundler + low holders)
+    const hasRugIndicators = candidate.bundlerData?.bundledPercent > 50 &&
+      (candidate.metrics?.holderCount || 0) < 100;
+    if (hasRugIndicators) {
       failedFilters.push('ACTIVE_FEE_CLAIM_RISK');
     }
   }

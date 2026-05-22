@@ -250,6 +250,9 @@ function defaultStrategy() {
     healthFilterGrade: 'D',
     minAgeHours: 0,
     minLiquidity: 5000,
+    minMarketCap: 25000,
+    minVolume24h: 5000,
+    maxTopTenPercent: 75,
 
     // AI
     use_llm: true,

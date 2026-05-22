@@ -97,11 +97,20 @@ function analyzeManipulationRisks(candidate) {
   if (!candidate.bundlerData) return risks;
   
   const bundledPercent = candidate.bundlerData.bundledPercent || 0;
-  if (bundledPercent > 70) {
+  // Raised threshold: trade_fee/total_fee ratio is not a precise bundler metric
+  if (bundledPercent > 85) {
     risks.push({
       name: 'HEAVY_BUNDLER_ACTIVITY',
       severity: 'CRITICAL',
       description: `${bundledPercent}% bundled - wash trading likely`,
+      threshold: 85,
+      actual: bundledPercent
+    });
+  } else if (bundledPercent > 70) {
+    risks.push({
+      name: 'MODERATE_BUNDLER_ACTIVITY',
+      severity: 'HIGH',
+      description: `${bundledPercent}% bundled - possible wash trading`,
       threshold: 70,
       actual: bundledPercent
     });
@@ -125,9 +134,11 @@ function analyzeManipulationRisks(candidate) {
 
 function analyzeAgeRisks(candidate) {
   const risks = [];
-  if (!candidate.createdAt) return risks;
+  // Support both createdAtMs and createdAt fields
+  const createdAt = candidate.createdAtMs || candidate.createdAt;
+  if (!createdAt) return risks;
   
-  const ageSeconds = (Date.now() - candidate.createdAt) / 1000;
+  const ageSeconds = (Date.now() - createdAt) / 1000;
   const ageHours = ageSeconds / 3600;
   const ageMinutes = ageSeconds / 60;
   
@@ -227,9 +238,15 @@ export function quickRiskAssessment(candidate) {
   ];
   
   const criticalRisks = allRisks.filter(r => r.severity === 'CRITICAL');
+  
+  // Only reject if there are 2+ CRITICAL risks (single critical = warning, not block)
+  // OR if CRITICAL_LOW_LIQUIDITY is present (can't trade at all)
+  const hasUntradeable = criticalRisks.some(r => r.name === 'CRITICAL_LOW_LIQUIDITY');
+  const shouldReject = hasUntradeable || criticalRisks.length >= 2;
+  
   return {
-    shouldReject: criticalRisks.length > 0,
-    reason: criticalRisks.length > 0 ? criticalRisks[0].description : null,
+    shouldReject,
+    reason: criticalRisks.length > 0 ? criticalRisks.map(r => r.description).join('; ') : null,
     riskCount: allRisks.length,
     criticalCount: criticalRisks.length
   };
