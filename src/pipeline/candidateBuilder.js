@@ -119,7 +119,7 @@ export function filterCandidate(candidate, settings = {}) {
 
   const failedFilters = [];
 
-  const healthRequirement = settings.healthFilterGrade || 'B';
+  const healthRequirement = settings.healthFilterGrade || 'C';  // TESTING: relaxed from B to C
 
   const gradeOrder = {
     A: 4,
@@ -133,52 +133,52 @@ export function filterCandidate(candidate, settings = {}) {
   }
 
   // ==========================================
-  // LIQUIDITY (STRICTER: 40k minimum for meme scalping)
+  // LIQUIDITY (TESTING: 20k compromise - was 10k, tried 40k)
   // ==========================================
   if (
     candidate.metrics?.liquidityUsd <
-    (settings.minLiquidity ?? 40000)
+    (settings.minLiquidity ?? 20000)
   ) {
     failedFilters.push('LIQUIDITY');
   }
 
   // ==========================================
-  // MARKET CAP (NEW: minimum 100k to avoid micro-caps)
+  // MARKET CAP (TESTING: 50k compromise - new was 100k)
   // ==========================================
   const mcap = candidate.metrics?.marketCapUsd || candidate.metrics?.graduatedMarketCapUsd || 0;
-  if (mcap < (settings.minMarketCap ?? 100000)) {
+  if (mcap < (settings.minMarketCap ?? 50000)) {
     failedFilters.push('MCAP_TOO_LOW');
   }
 
   // ==========================================
-  // HOLDER CONCENTRATION (STRICTER: 40% max instead of 75%)
+  // HOLDER CONCENTRATION (TESTING: 50% compromise - was 75%, tried 40%)
   // ==========================================
   if (
     candidate.holderData?.topTenPercent >
-    (settings.maxTopTenPercent ?? 40)
+    (settings.maxTopTenPercent ?? 50)
   ) {
     failedFilters.push('HOLDER_CONCENTRATION');
   }
 
   // ==========================================
-  // VOLUME (STRICTER: 25k minimum for liquidity confidence)
+  // VOLUME (TESTING: 10k compromise - was 1k, tried 25k)
   // ==========================================
   const volume24h =
     candidate.metrics?.graduatedVolumeUsd ||
     candidate.metrics?.trendingVolumeUsd ||
     0;
 
-  if (volume24h < (settings.minVolume24h ?? 25000)) {
+  if (volume24h < (settings.minVolume24h ?? 10000)) {
     failedFilters.push('VOLUME');
   }
 
   // ==========================================
-  // AGE CHECK (STRICTER: 3 hours minimum to avoid fresh rug risk)
+  // AGE CHECK (TESTING: 1 hour compromise - was 30min, tried 3h)
   // ==========================================
   const ageHours =
     (Date.now() - candidate.createdAtMs) / (1000 * 3600);
 
-  if (ageHours < (settings.minAgeHours ?? 3)) {
+  if (ageHours < (settings.minAgeHours ?? 1)) {
     failedFilters.push('TOO_NEW');
   }
 
