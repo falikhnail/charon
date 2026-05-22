@@ -115,29 +115,95 @@ export async function refreshPosition(position, { autoExit = true, jupiterPnl = 
   if (!Number.isFinite(Number(mcap)) || !Number.isFinite(Number(position.entry_mcap)) || Number(position.entry_mcap) <= 0) {
     return null;
   }
+  
   const highWaterMcap = Math.max(Number(position.high_water_mcap || 0), Number(mcap));
   const highWaterPrice = Math.max(Number(position.high_water_price || 0), Number(price || 0));
   let pnlPercent = (Number(mcap) / Number(position.entry_mcap) - 1) * 100;
   let pnlSol = Number(position.size_sol) * pnlPercent / 100;
+  
   if (jupiterPnl && Number.isFinite(Number(jupiterPnl.totalPnlPercentageNative))) {
     pnlPercent = Number(jupiterPnl.totalPnlPercentageNative);
     pnlSol = Number.isFinite(Number(jupiterPnl.totalPnlNative)) ? Number(jupiterPnl.totalPnlNative) : pnlSol;
   }
-  const tpHit = pnlPercent >= Number(position.tp_percent);
-  const slHit = pnlPercent <= Number(position.sl_percent);
-  const trailingArmed = position.trailing_armed || (position.trailing_enabled && tpHit);
-  const trailDrop = highWaterMcap > 0 ? (Number(mcap) / highWaterMcap - 1) * 100 : 0;
-  const trailingHit = trailingArmed && position.trailing_enabled && trailDrop <= -Math.abs(Number(position.trailing_percent));
+  
+  // Get strategy and multi-level SL settings
+  const strat = strategyById(position.strategy_id);
+  const hardTpPercent = position.hard_tp_percent ?? strat?.hard_tp_percent ?? 12;
+  const softSlPercent = position.soft_sl_percent ?? strat?.soft_sl_percent ?? -10;
+  const emergencySlPercent = position.emergency_sl_percent ?? strat?.emergency_sl_percent ?? -15;
+  const hardKillSlPercent = Number(position.sl_percent); // Original SL (e.g., -25%)
+  
+  // Check if market is trending for trailing
+  const selectedTrending = trending.get(position.mint);
+  const isTrending = Boolean(selectedTrending?.volume && selectedTrending?.swaps > 10);
+  
+  // Partial SL checks (before main exit logic)
+  let softSlHit = false;
+  let emergencySlHit = false;
+  
+  if (pnlPercent <= softSlPercent && !position.soft_sl_done && position.execution_mode === 'live' && position.token_amount_raw) {
+    softSlHit = true;
+    db.prepare('UPDATE dry_run_positions SET soft_sl_done = 1 WHERE id = ?').run(position.id);
+    console.log(`[position] ${position.id} soft SL at ${pnlPercent.toFixed(1)}% - selling 20% to reduce exposure`);
+    try {
+      const sellAmount = Math.floor(Number(position.token_amount_raw) * 0.2); // Sell 20%
+      if (sellAmount > 0) {
+        const sell = await executeLiveSell({ ...position, token_amount_raw: String(sellAmount) }, 'SOFT_SL');
+        const remaining = Number(position.token_amount_raw) - sellAmount;
+        db.prepare('UPDATE dry_run_positions SET token_amount_raw = ? WHERE id = ?').run(String(remaining), position.id);
+        console.log(`[position] ${position.id} soft SL sold ${sellAmount} tokens (20%), ${remaining} remaining`);
+      }
+    } catch (err) {
+      console.log(`[position] ${position.id} soft SL partial sell failed: ${err.message}`);
+    }
+  }
+  
   let exitReason = null;
   let closed = false;
 
   // Max hold time check
-  const strat = strategyById(position.strategy_id);
   if (strat?.max_hold_ms > 0 && (now() - position.opened_at_ms) >= strat.max_hold_ms) {
     exitReason = 'MAX_HOLD';
   }
 
-  // Partial TP check
+  // Multi-level exit logic (priority order)
+  if (!exitReason) {
+    // 1. Hard kill SL (worst case, usually -25%)
+    if (pnlPercent <= hardKillSlPercent) {
+      exitReason = 'HARD_SL';
+    }
+    // 2. Emergency SL (e.g., -15%, exit hard close remaining)
+    else if (emergencySlHit || pnlPercent <= emergencySlPercent) {
+      exitReason = 'EMERGENCY_SL';
+    }
+    // 3. Hard TP for small profits (if below hard_tp threshold and no trailing)
+    else if (pnlPercent >= hardTpPercent && pnlPercent < Number(position.tp_percent) && !position.trailing_enabled) {
+      exitReason = 'HARD_TP_SMALL';
+    }
+    // 4. Standard TP (but only if trailing disabled or emergency condition)
+    else if (pnlPercent >= Number(position.tp_percent) && !position.trailing_enabled) {
+      exitReason = 'TP';
+    }
+    // 5. Trailing TP (only if trending market and pnl good)
+    else if (position.trailing_enabled && isTrending && pnlPercent >= Number(position.tp_percent)) {
+      const trailingArmed = position.trailing_armed || (position.trailing_enabled && pnlPercent >= Number(position.tp_percent));
+      const trailDrop = highWaterMcap > 0 ? (Number(mcap) / highWaterMcap - 1) * 100 : 0;
+      const trailingPercent = Number(position.trailing_percent);
+      const trailingHit = trailingArmed && trailDrop <= -Math.abs(trailingPercent);
+      
+      db.prepare('UPDATE dry_run_positions SET trailing_armed = ? WHERE id = ?').run(trailingArmed ? 1 : 0, position.id);
+      
+      if (trailingHit) {
+        exitReason = 'TRAILING_TP';
+      }
+    }
+    // 6. Force exit if not trending but TP hit and trailing was on
+    else if (position.trailing_enabled && !isTrending && pnlPercent >= Number(position.tp_percent)) {
+      exitReason = 'TP_NO_TREND';
+    }
+  }
+
+  // Partial TP check (separate from SL)
   if (!exitReason && strat?.partial_tp && !position.partial_tp_done && pnlPercent >= strat.partial_tp_at_percent) {
     db.prepare('UPDATE dry_run_positions SET partial_tp_done = 1 WHERE id = ?').run(position.id);
     console.log(`[position] ${position.id} partial TP at ${pnlPercent.toFixed(1)}% (${strat.partial_tp_sell_percent}% sell)`);
@@ -162,22 +228,16 @@ export async function refreshPosition(position, { autoExit = true, jupiterPnl = 
     }
   }
 
-  // Standard exit checks
-  if (!exitReason) {
-    if (slHit) exitReason = 'SL';
-    else if (tpHit && !position.trailing_enabled) exitReason = 'TP';
-    else if (trailingHit) exitReason = 'TRAILING_TP';
-  }
-
   // Live exits will override these with realized SOL values
   let finalPnlPercent = pnlPercent;
   let finalPnlSol = pnlSol;
 
+  const trailingArmedValue = (position.trailing_armed || (position.trailing_enabled && pnlPercent >= Number(position.tp_percent))) ? 1 : 0;
   db.prepare(`
     UPDATE dry_run_positions
     SET high_water_mcap = ?, high_water_price = ?, trailing_armed = ?
     WHERE id = ?
-  `).run(highWaterMcap, highWaterPrice, trailingArmed ? 1 : 0, position.id);
+  `).run(highWaterMcap, highWaterPrice, trailingArmedValue, position.id);
 
   if (exitReason && autoExit && position.execution_mode === 'live') {
     if (sellInProgress.has(position.id)) return { ...position, exitReason: null };

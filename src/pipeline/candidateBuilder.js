@@ -133,45 +133,63 @@ export function filterCandidate(candidate, settings = {}) {
   }
 
   // ==========================================
-  // LIQUIDITY
+  // LIQUIDITY (STRICTER: 40k minimum for meme scalping)
   // ==========================================
   if (
     candidate.metrics?.liquidityUsd <
-    (settings.minLiquidity ?? 10000)
+    (settings.minLiquidity ?? 40000)
   ) {
     failedFilters.push('LIQUIDITY');
   }
 
   // ==========================================
-  // HOLDER CONCENTRATION
+  // MARKET CAP (NEW: minimum 100k to avoid micro-caps)
+  // ==========================================
+  const mcap = candidate.metrics?.marketCapUsd || candidate.metrics?.graduatedMarketCapUsd || 0;
+  if (mcap < (settings.minMarketCap ?? 100000)) {
+    failedFilters.push('MCAP_TOO_LOW');
+  }
+
+  // ==========================================
+  // HOLDER CONCENTRATION (STRICTER: 40% max instead of 75%)
   // ==========================================
   if (
     candidate.holderData?.topTenPercent >
-    (settings.maxTopTenPercent ?? 75)
+    (settings.maxTopTenPercent ?? 40)
   ) {
     failedFilters.push('HOLDER_CONCENTRATION');
   }
 
   // ==========================================
-  // VOLUME
+  // VOLUME (STRICTER: 25k minimum for liquidity confidence)
   // ==========================================
   const volume24h =
     candidate.metrics?.graduatedVolumeUsd ||
     candidate.metrics?.trendingVolumeUsd ||
     0;
 
-  if (volume24h < (settings.minVolume24h ?? 1000)) {
+  if (volume24h < (settings.minVolume24h ?? 25000)) {
     failedFilters.push('VOLUME');
   }
 
   // ==========================================
-  // AGE CHECK
+  // AGE CHECK (STRICTER: 3 hours minimum to avoid fresh rug risk)
   // ==========================================
   const ageHours =
     (Date.now() - candidate.createdAtMs) / (1000 * 3600);
 
-  if (ageHours < (settings.minAgeHours ?? 0.5)) {
+  if (ageHours < (settings.minAgeHours ?? 3)) {
     failedFilters.push('TOO_NEW');
+  }
+
+  // ==========================================
+  // MINT RISK (NEW: check for common rug indicators)
+  // ==========================================
+  if (candidate.token?.mint && candidate.signals?.label === 'fee_claim') {
+    // Fee claim tokens often have rug pattern
+    if (!candidate.feeClaim?.isInactive) {
+      failedFilters.push('ACTIVE_FEE_CLAIM_RISK');
+    }
   }
 
   return {

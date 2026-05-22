@@ -6,33 +6,69 @@ import { db } from '../db/connection.js';
 
 export function fallbackLessons(summary) {
   const lessons = [];
+  
+  // Analyze exit reasons with quality weighting
+  const byExitReason = summary.positions.byExitReason || [];
+  const trailingTpData = byExitReason.find(r => r.exitReason === 'TRAILING_TP');
+  const hardTpData = byExitReason.find(r => r.exitReason === 'HARD_TP_SMALL');
+  const slData = byExitReason.find(r => r.exitReason === 'SL' || r.exitReason === 'HARD_SL' || r.exitReason === 'EMERGENCY_SL');
+  
+  // Warning: Trailing TP with low quality (frequent but low PnL)
+  if (trailingTpData && trailingTpData.count >= 3 && trailingTpData.avgPnlPercent < 3) {
+    lessons.push({
+      lesson: `Trailing TP exiting too early with low profit: avg ${fmtPct(trailingTpData.avgPnlPercent)} across ${trailingTpData.count} trades. Consider: (1) increase trailing_percent from 3-4% to 6-8%, (2) only enable trailing after +20% confirmation, (3) harder market detection.`,
+      evidence: trailingTpData,
+    });
+  }
+  
+  // Recommendation: Hard TP performs better for small profits
+  if (hardTpData && hardTpData.count >= 2 && hardTpData.avgPnlPercent > (trailingTpData?.avgPnlPercent || 0)) {
+    lessons.push({
+      lesson: `Hard TP for small profits (${fmtPct(hardTpData.avgPnlPercent)} avg) outperforms trailing in current market. Keep hard_tp_percent at 12%.`,
+      evidence: hardTpData,
+    });
+  }
+  
+  // SL being too tight or slippage issue
+  if (slData && slData.count >= 3 && slData.avgPnlPercent < -10) {
+    lessons.push({
+      lesson: `SL exits averaging ${fmtPct(slData.avgPnlPercent)}—suggest multi-level: soft_sl -10% (20% partial), emergency_sl -15% (hard close), hard_kill -25%.`,
+      evidence: slData,
+    });
+  }
+  
   const bestRoute = summary.positions.byRoute?.[0];
   const worstRoute = [...(summary.positions.byRoute || [])].sort((a, b) => a.pnlPercent - b.pnlPercent)[0];
+  
   if (bestRoute && bestRoute.count >= 2 && bestRoute.pnlPercent > 0) {
     lessons.push({
       lesson: `Prefer ${bestRoute.route} when other filters are clean; it led the window with ${fmtPct(bestRoute.avgPnlPercent)} avg PnL across ${bestRoute.count} closed dry-runs.`,
       evidence: bestRoute,
     });
   }
+  
   if (worstRoute && worstRoute.count >= 2 && worstRoute.pnlPercent < 0) {
     lessons.push({
       lesson: `Be stricter on ${worstRoute.route}; it underperformed with ${fmtPct(worstRoute.avgPnlPercent)} avg PnL across ${worstRoute.count} closed dry-runs.`,
       evidence: worstRoute,
     });
   }
-  const slCount = summary.positions.worst?.filter(row => row.exitReason === 'SL').length || 0;
+  
+  const slCount = summary.positions.worst?.filter(row => row.exitReason === 'SL' || row.exitReason === 'HARD_SL').length || 0;
   if (slCount >= 2) {
     lessons.push({
       lesson: `Recent worst exits clustered around SL; require stronger fresh pre-entry mcap/liquidity confirmation before accepting late entries.`,
       evidence: { slWorstCount: slCount, worst: summary.positions.worst },
     });
   }
+  
   if (!lessons.length) {
     lessons.push({
       lesson: 'Not enough closed dry-run evidence yet; keep collecting decisions before changing filters aggressively.',
       evidence: { closed: summary.positions.closed },
     });
   }
+  
   return lessons.slice(0, 6);
 }
 

@@ -19,18 +19,78 @@ export function summarizeLearningWindow(windowMs) {
   const losers = closed.filter(position => Number(position.pnl_percent || 0) < 0);
   const totalPnlPercent = closed.reduce((sum, position) => sum + Number(position.pnl_percent || 0), 0);
   const totalPnlSol = closed.reduce((sum, position) => sum + Number(position.pnl_sol || 0), 0);
+  
+  // PnL-weighted exit reason analysis (critical for learning!)
+  const byExitReason = new Map();
+  for (const position of closed) {
+    const exitReason = position.exit_reason || 'UNKNOWN';
+    const pnl = Number(position.pnl_percent || 0);
+    const pnlSol = Number(position.pnl_sol || 0);
+    
+    const row = byExitReason.get(exitReason) || {
+      exitReason,
+      count: 0,
+      wins: 0,
+      losses: 0,
+      avgPnlPercent: 0,
+      avgPnlSol: 0,
+      totalPnlPercent: 0,
+      totalPnlSol: 0,
+      winRate: 0,
+      quality_score: 0  // Weighted score: avg PnL weighted by win rate
+    };
+    
+    row.count += 1;
+    row.wins += pnl > 0 ? 1 : 0;
+    row.losses += pnl < 0 ? 1 : 0;
+    row.totalPnlPercent += pnl;
+    row.totalPnlSol += pnlSol;
+    row.avgPnlPercent = row.totalPnlPercent / row.count;
+    row.avgPnlSol = row.totalPnlSol / row.count;
+    row.winRate = row.count ? row.wins / row.count * 100 : 0;
+    
+    // Quality score = (win% * 0.5 + avg_pnl_normalized * 0.5)
+    // This prevents trailing TP from being preferred if it wins often but with small PnL
+    const avgPnlNormalized = Math.max(-100, Math.min(100, row.avgPnlPercent)); // Normalize to -100..100
+    row.quality_score = (row.winRate / 100) * 0.4 + (avgPnlNormalized / 50) * 0.6; // 40% win rate, 60% PnL quality
+    
+    byExitReason.set(exitReason, row);
+  }
+  
   const byRoute = new Map();
   for (const position of closed) {
     const candidate = positionSnapshotCandidate(position);
     const route = candidate.signals?.route || candidate.signals?.label || 'unknown';
-    const row = byRoute.get(route) || { route, count: 0, wins: 0, losses: 0, pnlPercent: 0, pnlSol: 0 };
+    const pnl = Number(position.pnl_percent || 0);
+    const pnlSol = Number(position.pnl_sol || 0);
+    
+    const row = byRoute.get(route) || {
+      route,
+      count: 0,
+      wins: 0,
+      losses: 0,
+      pnlPercent: 0,
+      pnlSol: 0,
+      winRate: 0,
+      avgPnlPercent: 0,
+      quality_score: 0
+    };
+    
     row.count += 1;
-    row.wins += Number(position.pnl_percent || 0) > 0 ? 1 : 0;
-    row.losses += Number(position.pnl_percent || 0) < 0 ? 1 : 0;
-    row.pnlPercent += Number(position.pnl_percent || 0);
-    row.pnlSol += Number(position.pnl_sol || 0);
+    row.wins += pnl > 0 ? 1 : 0;
+    row.losses += pnl < 0 ? 1 : 0;
+    row.pnlPercent += pnl;
+    row.pnlSol += pnlSol;
+    row.winRate = row.count ? row.wins / row.count * 100 : 0;
+    row.avgPnlPercent = row.count ? row.pnlPercent / row.count : 0;
+    
+    // Same quality scoring for routes
+    const avgPnlNormalized = Math.max(-100, Math.min(100, row.avgPnlPercent));
+    row.quality_score = (row.winRate / 100) * 0.4 + (avgPnlNormalized / 50) * 0.6;
+    
     byRoute.set(route, row);
   }
+  
   const batches = db.prepare(`
     SELECT verdict, COUNT(*) AS count, AVG(confidence) AS avg_confidence
     FROM llm_batches
@@ -80,7 +140,8 @@ export function summarizeLearningWindow(windowMs) {
         ...row,
         winRate: row.count ? row.wins / row.count * 100 : null,
         avgPnlPercent: row.count ? row.pnlPercent / row.count : null,
-      })).sort((a, b) => b.pnlPercent - a.pnlPercent),
+      })).sort((a, b) => b.quality_score - a.quality_score), // Sort by quality, not just PnL
+      byExitReason: [...byExitReason.values()].sort((a, b) => b.quality_score - a.quality_score),
       best,
       worst,
     },
