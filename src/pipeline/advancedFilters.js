@@ -44,12 +44,13 @@ export function calculateTokenHealthScore(candidate, context = {}) {
 }
 
 function calculateLiquidityScore(candidate) {
-  if (!candidate.liquidity) return 30;
-  const pc = candidate.liquidity.poolCapital || 0;
-  if (pc < 10000) return 20;
-  if (pc < 50000) return 40;
-  if (pc < 100000) return 60;
-  if (pc < 500000) return 80;
+  // Use metrics liquidityUsd directly (more reliable than candidate.liquidity.poolCapital for scoring)
+  const pc = candidate.metrics?.liquidityUsd || candidate.liquidity?.poolCapital || 0;
+  if (pc < 5000) return 15;
+  if (pc < 10000) return 30;
+  if (pc < 25000) return 50;
+  if (pc < 50000) return 65;
+  if (pc < 100000) return 80;
   return 95;
 }
 
@@ -75,23 +76,29 @@ function calculateFeeClaimScore(candidate) {
 }
 
 function calculateAgePhaseScore(candidate) {
-  if (!candidate.createdAt) return 50;
-  const ageSeconds = (Date.now() - candidate.createdAt) / 1000;
+  const createdAt = candidate.createdAtMs || candidate.createdAt;
+  if (!createdAt) return 50;
+  const ageSeconds = (Date.now() - createdAt) / 1000;
   const ageHours = ageSeconds / 3600;
-  if (ageHours < 1) return 30;
-  if (ageHours < 6) return 50;
-  if (ageHours < 24) return 70;
+  if (ageHours < 0.25) return 20;
+  if (ageHours < 1) return 40;
+  if (ageHours < 6) return 60;
+  if (ageHours < 24) return 75;
   if (ageHours < 168) return 85;
   return 95;
 }
 
 function calculateVolumeVelocityScore(candidate) {
-  if (!candidate.volume24h) return 40;
-  const vol = candidate.volume24h;
+  // Use metrics volume data (graduated or trending)
+  const vol = candidate.volume24h 
+    || candidate.metrics?.graduatedVolumeUsd 
+    || candidate.metrics?.trendingVolumeUsd 
+    || 0;
   if (vol < 1000) return 25;
-  if (vol < 10000) return 45;
-  if (vol < 100000) return 70;
-  if (vol < 1000000) return 85;
+  if (vol < 5000) return 40;
+  if (vol < 15000) return 55;
+  if (vol < 50000) return 70;
+  if (vol < 100000) return 85;
   return 95;
 }
 

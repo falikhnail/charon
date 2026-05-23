@@ -279,7 +279,7 @@ function buildSizingGuidance(health, risks) {
   const riskReduction = (riskFactor / 100) * 0.5;
   sizeMultiplier *= Math.max(0, 1 - riskReduction);
   
-  // Check for critical risks - zero them out
+  // Check for critical risks - reduce significantly but don't zero out for single critical
   const allRisks = [
     ...(risks.holderRisks || []),
     ...(risks.liquidityRisks || []),
@@ -288,8 +288,10 @@ function buildSizingGuidance(health, risks) {
     ...(risks.signalRisks || []),
   ];
   const criticalCount = allRisks.filter(r => r.severity === 'CRITICAL').length;
-  if (criticalCount > 0) {
-    sizeMultiplier = 0;
+  if (criticalCount >= 2) {
+    sizeMultiplier = 0;  // Multiple critical = no trade
+  } else if (criticalCount === 1) {
+    sizeMultiplier *= 0.3;  // Single critical = heavily reduced but not zero
   }
   
   const confidence = getConfidenceLevel(grade, riskFactor);
@@ -310,14 +312,14 @@ function getConfidenceLevel(grade, riskFactor) {
   const baseConfidence = {
     'A': 90,
     'B': 70,
-    'C': 40,
-    'D': 10,
+    'C': 50,
+    'D': 25,
   };
   
   let confidence = baseConfidence[grade] || 0;
   
   // Reduce by risk factor
-  const riskPenalty = (riskFactor / 100) * 30;  // Up to 30% reduction
+  const riskPenalty = (riskFactor / 100) * 20;  // Up to 20% reduction (was 30%)
   confidence -= riskPenalty;
   
   return Math.max(0, confidence);
